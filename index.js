@@ -74,15 +74,28 @@ async function sendServerCommand(command) {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'server-id': OXFORD_SERVER_ID,
-            'server-key': OXFORD_API_KEY,
-            'User-Agent': 'Oxford-Discord-Bot'
+            'server-id': process.env.OXFORD_SERVER_ID,
+            'server-key': process.env.OXFORD_API_KEY
         },
         body: JSON.stringify({ command })
     });
 
-    return response.json();
+    const text = await response.text();
+
+    console.log("🔴 RAW OXFORD RESPONSE:");
+    console.log(text);
+
+    // Try to parse JSON safely
+    try {
+        return JSON.parse(text);
+    } catch {
+        return {
+            error: true,
+            raw: text
+        };
+    }
 }
+
 
 // --- Discord Client ---
 const client = new Client({
