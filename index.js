@@ -121,25 +121,48 @@ client.once("clientReady", () => {
    INTERACTIONS
 ======================= */
 
-client.on("interactionCreate", async interaction => {
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === "setup") {
-    await interaction.deferReply({ ephemeral: true });
+  try {
+    // ✅ ACKNOWLEDGE IMMEDIATELY
+    await interaction.deferReply({ flags: 64 }); // ephemeral
 
-    const db = readDB();
-    const guildId = interaction.guild.id;
+    if (interaction.commandName === "setup") {
+      // ⏳ NOW it's safe to do async work
+      const serverId = interaction.options.getString("server_id");
+      const apiKey = interaction.options.getString("api_key");
 
-    if (db[guildId]) {
-      return interaction.editReply({
+      // Example DB save
+      const db = readDB();
+      db[interaction.guildId] = {
+        serverId,
+        apiKey
+      };
+      writeDB(db);
+
+      await interaction.editReply({
         embeds: [
-          redEmbed(
-            "❌ Already Configured",
-            "This server has already been set up."
-          )
+          {
+            title: "✅ Setup Complete",
+            description: "Your server has been configured successfully.",
+            color: 0xED4245 // RED
+          }
         ]
       });
     }
+
+  } catch (err) {
+    console.error("Interaction error:", err);
+
+    // 🛟 SAFETY NET — only reply if still possible
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({
+        content: "❌ An unexpected error occurred."
+      }).catch(() => {});
+    }
+  }
+});
 
     const serverId = interaction.options.getString("server_id");
     const apiKey = interaction.options.getString("api_key");
