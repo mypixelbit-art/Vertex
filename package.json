@@ -1,25 +1,17 @@
 {
-  "name": "oxford-roleplay-bot",
+  "name": "vertex-discord-bot",
   "version": "1.0.0",
-  "description": "A Discord bot for managing Oxford Roleplay servers via API",
+  "description": "Discord bot for controlling an Oxford game server",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
-  },
-  "keywords": [
-    "discord",
-    "bot",
-    "oxford-roleplay",
-    "api"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.3.1"
+    "start": "node index.js"
   },
   "engines": {
-    "node": ">=16.9.0"
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
   }
 }
