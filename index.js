@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const http = require('http'); // New: For the fake server
 require('dotenv').config();
 
 // --- Configuration ---
@@ -43,11 +44,19 @@ const commands = [
 
 // --- Database Helper Functions ---
 function loadDb() {
-    if (!fs.existsSync(DB_PATH)) {
-        fs.writeFileSync(DB_PATH, JSON.stringify({}));
+    try {
+        if (!fs.existsSync(DB_PATH)) {
+            fs.writeFileSync(DB_PATH, JSON.stringify({}));
+            return {};
+        }
+        const data = fs.readFileSync(DB_PATH, 'utf8');
+        // If file is empty, return empty object instead of crashing
+        if (!data) return {};
+        return JSON.parse(data);
+    } catch (error) {
+        console.error("Database corrupted or empty. Resetting.");
         return {};
     }
-    return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
 }
 
 function saveDb(data) {
@@ -56,7 +65,6 @@ function saveDb(data) {
 
 // --- API Helper Function ---
 async function sendServerCommand(serverId, apiKey, commandString) {
-    // Note: We need 'fetch' (built-in to Node v18+). If using older Node, install 'node-fetch'
     const response = await fetch('https://api.oxfd.re/v1/server/command', {
         method: 'POST',
         headers: {
@@ -154,6 +162,17 @@ client.on('interactionCreate', async interaction => {
         console.error(error);
         await interaction.editReply(`❌ **Error:** Failed to send command.\nDetails: ${error.message}`);
     }
+});
+
+// --- CRITICAL: HTTP Server for Render ---
+// This keeps the bot alive on Render by satisfying the port requirement.
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.write('Oxford Bot is online!');
+    res.end();
+}).listen(port, () => {
+    console.log(`Keep-alive server listening on port ${port}`);
 });
 
 // --- Start Bot ---
