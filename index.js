@@ -1,24 +1,18 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-const http = require('http'); // New: For the fake server
+const http = require('http');
 require('dotenv').config();
 
 // --- Configuration ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const DB_PATH = path.join(__dirname, 'database.json');
+
+// PULLING KEYS FROM RENDER ENVIRONMENT SETTINGS
+const SERVER_ID = process.env.OXFORD_SERVER_ID; 
+const API_KEY = process.env.OXFORD_API_KEY;
 
 // --- Define Commands ---
+// Note: We removed /setup because the keys are now saved in Render!
 const commands = [
-    new SlashCommandBuilder()
-        .setName('setup')
-        .setDescription('Link this Discord server to your Oxford Server API')
-        .addStringOption(option => 
-            option.setName('serverid').setDescription('Your Oxford Server ID').setRequired(true))
-        .addStringOption(option => 
-            option.setName('apikey').setDescription('Your Oxford API Key').setRequired(true)),
-
     new SlashCommandBuilder()
         .setName('ban')
         .setDescription('Ban a player from the game server')
@@ -42,62 +36,51 @@ const commands = [
             option.setName('command').setDescription('The command to run (e.g., "time 12", "announce Hello")').setRequired(true)),
 ].map(command => command.toJSON());
 
-// --- Database Helper Functions ---
-function loadDb() {
-    try {
-        if (!fs.existsSync(DB_PATH)) {
-            fs.writeFileSync(DB_PATH, JSON.stringify({}));
-            return {};
-        }
-        const data = fs.readFileSync(DB_PATH, 'utf8');
-        // If file is empty, return empty object instead of crashing
-        if (!data) return {};
-        return JSON.parse(data);
-    } catch (error) {
-        console.error("Database corrupted or empty. Resetting.");
-        return {};
-    }
-}
-
-function saveDb(data) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
-
 // --- API Helper Function ---
-async function sendServerCommand(serverId, apiKey, commandString) {
+async function sendServerCommand(commandString) {
+    // Debug log to verify keys are loaded
+    console.log(`Sending command to Server ID: ${SERVER_ID ? 'Loaded OK' : 'MISSING'}`); 
+
     const response = await fetch('https://api.oxfd.re/v1/server/command', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'server-id': serverId,
-            'server-key': apiKey
+            'server-id': SERVER_ID,
+            'server-key': API_KEY
         },
         body: JSON.stringify({ command: commandString })
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-        throw new Error(`API Error: ${response.statusText}`);
+        throw new Error(`API Error: ${response.statusText} - ${JSON.stringify(data)}`);
     }
-    return await response.json();
+    return data;
 }
 
 // --- Initialize Client ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// --- Event: Bot Ready (Register Commands Here) ---
+// --- Event: Bot Ready ---
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
+
+    // Safety check for keys
+    if (!SERVER_ID || !API_KEY) {
+        console.error("⚠️ CRITICAL: OXFORD_SERVER_ID or OXFORD_API_KEY is missing from Render Environment Variables!");
+    } else {
+        console.log("✅ Oxford API Keys successfully loaded from Environment.");
+    }
 
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
     try {
-        console.log('Started refreshing application (/) commands...');
-        
+        console.log('Refreshing application (/) commands...');
         await rest.put(
             Routes.applicationCommands(CLIENT_ID),
             { body: commands },
         );
-
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
         console.error('Error reloading commands:', error);
@@ -108,34 +91,6 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const db = loadDb();
-    const guildId = interaction.guildId;
-
-    // --- /setup Command ---
-    if (interaction.commandName === 'setup') {
-        if (!interaction.member.permissions.has('Administrator')) {
-            return interaction.reply({ content: 'You need Administrator permissions to use this.', ephemeral: true });
-        }
-
-        const serverId = interaction.options.getString('serverid');
-        const apiKey = interaction.options.getString('apikey');
-
-        db[guildId] = { serverId, apiKey };
-        saveDb(db);
-
-        await interaction.reply({ content: '✅ API Setup complete! Keys linked to this Discord server.', ephemeral: true });
-        return;
-    }
-
-    // --- Check Database for Keys ---
-    const serverData = db[guildId];
-    if (!serverData) {
-        return interaction.reply({ content: '❌ This server is not set up yet. An admin must run `/setup` first.', ephemeral: true });
-    }
-
-    const { serverId, apiKey } = serverData;
-
-    // --- Execute Game Commands ---
     try {
         await interaction.deferReply(); 
 
@@ -155,7 +110,7 @@ client.on('interactionCreate', async interaction => {
             commandToSend = interaction.options.getString('command');
         }
 
-        const result = await sendServerCommand(serverId, apiKey, commandToSend);
+        const result = await sendServerCommand(commandToSend);
         await interaction.editReply(`✅ **Command Sent!**\nExecuted: \`${commandToSend}\`\nResponse: ${result.message || 'Success'}`);
 
     } catch (error) {
@@ -164,8 +119,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// --- CRITICAL: HTTP Server for Render ---
-// This keeps the bot alive on Render by satisfying the port requirement.
+// --- HTTP Server for Render (Keep Alive) ---
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
