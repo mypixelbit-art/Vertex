@@ -37,8 +37,8 @@ const commands = [
 ].map(command => command.toJSON());
 
 // --- API Helper Function ---
+// --- API Helper Function (Debug Version) ---
 async function sendServerCommand(commandString) {
-    // Debug log to verify keys are loaded
     console.log(`Sending command to Server ID: ${SERVER_ID ? 'Loaded OK' : 'MISSING'}`); 
 
     const response = await fetch('https://api.oxfd.re/v1/server/command', {
@@ -51,14 +51,26 @@ async function sendServerCommand(commandString) {
         body: JSON.stringify({ command: commandString })
     });
 
-    const data = await response.json();
+    // 1. Get the raw text first (don't parse JSON yet)
+    const rawText = await response.text();
 
+    // 2. Check if the request failed
     if (!response.ok) {
-        throw new Error(`API Error: ${response.statusText} - ${JSON.stringify(data)}`);
+        // Log the status and the raw HTML/Text to the console so we can debug
+        console.error(`API Error [${response.status}]: ${rawText}`);
+        
+        // Throw a clean error for the Discord user
+        throw new Error(`API Error ${response.status}: The server returned an error (check console logs).`);
     }
-    return data;
-}
 
+    // 3. If it succeeded, try to parse the JSON
+    try {
+        return JSON.parse(rawText);
+    } catch (e) {
+        console.error("Failed to parse JSON response:", rawText);
+        throw new Error("Invalid JSON response from server.");
+    }
+}
 // --- Initialize Client ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
