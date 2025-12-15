@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from "discord.js";
 import { redEmbed } from "../utils/embeds.js";
 import { getConfig, setConfig } from "../utils/config.js";
+import { fetchServerInfo } from "../utils/oxford.js";
 
 export default {
   data: new SlashCommandBuilder()
@@ -24,18 +25,18 @@ export default {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     const guildId = interaction.guild.id;
 
-    // Prevent overwriting setup
     if (getConfig(guildId)) {
-      return interaction.reply({
+      return interaction.editReply({
         embeds: [
           redEmbed(
-            "❌ Already Configured",
-            "This server is already set up.\nContact the bot developer to reset."
+            "❌ Setup Already Completed",
+            "This server is already configured."
           )
-        ],
-        ephemeral: true
+        ]
       });
     }
 
@@ -43,6 +44,21 @@ export default {
     const apiKey = interaction.options.getString("api_key");
     const logChannel = interaction.options.getChannel("log_channel");
 
+    let serverInfo;
+    try {
+      serverInfo = await fetchServerInfo(serverId, apiKey);
+    } catch (err) {
+      return interaction.editReply({
+        embeds: [
+          redEmbed(
+            "❌ Oxford API Error",
+            err.message
+          )
+        ]
+      });
+    }
+
+    // Save config ONLY after successful API call
     setConfig(guildId, {
       serverId,
       apiKey,
@@ -51,15 +67,16 @@ export default {
       setupAt: Date.now()
     });
 
-    await interaction.reply({
-      embeds: [
-        redEmbed(
-          "✅ Setup Complete",
-          `**Oxford Server ID:** \`${serverId}\`\n` +
-          `**Log Channel:** ${logChannel}\n\n` +
-          "The bot is now fully configured."
-        )
-      ]
-    });
+    const embed = redEmbed(
+      "✅ Setup Complete",
+      `**Server Name:** ${serverInfo.Name}
+**Players:** ${serverInfo.CurrentPlayers}/${serverInfo.MaxPlayers}
+**Join Code:** \`${serverInfo.JoinCode}\`
+**Owner ID:** \`${serverInfo.OwnerId}\`
+
+🟢 API connection verified successfully.`
+    );
+
+    await interaction.editReply({ embeds: [embed] });
   }
 };
