@@ -1,192 +1,197 @@
-// ===============================
-// Vertex Discord Bot (FINAL)
-// ===============================
+import {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  EmbedBuilder,
+  PermissionFlagsBits
+} from "discord.js";
+import fs from "fs";
 
-const {
-    Client,
-    GatewayIntentBits,
-    REST,
-    Routes,
-    SlashCommandBuilder
-} = require('discord.js');
+/* =======================
+   BASIC CONFIG
+======================= */
 
-const http = require('http');
-require('dotenv').config();
-
-// -------------------------------
-// Environment Variables
-// -------------------------------
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
 
-const OXFORD_SERVER_ID = process.env.OXFORD_GAME_SERVER_ID;
-const OXFORD_API_KEY = process.env.OXFORD_API_KEY;
+const DB_FILE = "./database.json";
 
-// -------------------------------
-// Safety Check
-// -------------------------------
-if (
-    !DISCORD_TOKEN ||
-    !CLIENT_ID ||
-    !DISCORD_GUILD_ID ||
-    !OXFORD_SERVER_ID ||
-    !OXFORD_API_KEY
-) {
-    console.error('❌ Missing required environment variables!');
+/* =======================
+   DATABASE HELPERS
+======================= */
+
+function readDB() {
+  if (!fs.existsSync(DB_FILE)) return {};
+  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 }
 
-// -------------------------------
-// Slash Commands
-// -------------------------------
+function writeDB(data) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
+
+/* =======================
+   EMBED HELPER
+======================= */
+
+function redEmbed(title, description) {
+  return new EmbedBuilder()
+    .setColor(0xED4245)
+    .setTitle(title)
+    .setDescription(description)
+    .setTimestamp();
+}
+
+/* =======================
+   OXFORD API
+======================= */
+
+async function fetchServerInfo(serverId, apiKey) {
+  const res = await fetch("https://api.oxfd.re/v1/server", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "server-id": serverId,
+      "server-key": apiKey
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API Error ${res.status}: ${text}`);
+  }
+
+  return await res.json();
+}
+
+/* =======================
+   SLASH COMMANDS
+======================= */
+
 const commands = [
-    new SlashCommandBuilder()
-        .setName('ban')
-        .setDescription('Ban a player from the game server')
-        .addStringOption(option =>
-            option.setName('username')
-                .setDescription('In-game username')
-                .setRequired(true)
-        )
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for ban')
-                .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
-        .setName('kick')
-        .setDescription('Kick a player from the game server')
-        .addStringOption(option =>
-            option.setName('username')
-                .setDescription('In-game username')
-                .setRequired(true)
-        )
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for kick')
-                .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
-        .setName('run')
-        .setDescription('Run a custom server command')
-        .addStringOption(option =>
-            option.setName('command')
-                .setDescription('Command to run (example: time 12)')
-                .setRequired(true)
-        )
+  new SlashCommandBuilder()
+    .setName("setup")
+    .setDescription("Setup the bot for this server")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(opt =>
+      opt.setName("server_id")
+        .setDescription("Oxford Server ID")
+        .setRequired(true)
+    )
+    .addStringOption(opt =>
+      opt.setName("api_key")
+        .setDescription("Oxford API Key")
+        .setRequired(true)
+    )
+    .addChannelOption(opt =>
+      opt.setName("log_channel")
+        .setDescription("Log channel")
+        .setRequired(true)
+    )
 ].map(cmd => cmd.toJSON());
 
-// -------------------------------
-// Oxford API Call (USES BUILT-IN fetch)
-// -------------------------------
-async function sendServerCommand(command) {
-    const response = await fetch('https://api.oxfd.re/v1/server/command', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'server-id': OXFORD_SERVER_ID,
-            'server-key': OXFORD_API_KEY
-        },
-        body: JSON.stringify({ command })
-    });
+/* =======================
+   REGISTER COMMANDS
+======================= */
 
-    const text = await response.text();
+const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-    try {
-        return JSON.parse(text);
-    } catch {
-        return { error: true, raw: text };
-    }
-}
+(async () => {
+  await rest.put(
+    Routes.applicationCommands(CLIENT_ID),
+    { body: commands }
+  );
+  console.log("✅ Slash commands registered");
+})();
 
-// -------------------------------
-// Discord Client
-// -------------------------------
+/* =======================
+   CLIENT
+======================= */
+
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+  intents: [GatewayIntentBits.Guilds]
 });
 
-// -------------------------------
-// Bot Ready
-// -------------------------------
-client.once('ready', async () => {
-    console.log(`✅ Logged in as ${client.user.tag}`);
-
-    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-
-    try {
-        console.log('🔄 Registering slash commands...');
-        await rest.put(
-            Routes.applicationGuildCommands(CLIENT_ID, DISCORD_GUILD_ID),
-            { body: commands }
-        );
-        console.log('✅ Slash commands registered');
-    } catch (err) {
-        console.error('❌ Failed to register commands:', err);
-    }
+client.once("clientReady", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// -------------------------------
-// Interaction Handler
-// -------------------------------
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+/* =======================
+   INTERACTIONS
+======================= */
 
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "setup") {
     await interaction.deferReply({ ephemeral: true });
 
-    let commandToSend = '';
+    const db = readDB();
+    const guildId = interaction.guild.id;
 
-    try {
-        if (interaction.commandName === 'ban') {
-            const user = interaction.options.getString('username');
-            const reason = interaction.options.getString('reason');
-            commandToSend = `ban ${user} ${reason}`;
-        }
-
-        if (interaction.commandName === 'kick') {
-            const user = interaction.options.getString('username');
-            const reason = interaction.options.getString('reason');
-            commandToSend = `kick ${user} ${reason}`;
-        }
-
-        if (interaction.commandName === 'run') {
-            commandToSend = interaction.options.getString('command');
-        }
-
-        const result = await sendServerCommand(commandToSend);
-
-        if (result.error) {
-            return interaction.editReply(
-                `❌ Oxford API Error:\n\`\`\`${result.raw}\`\`\``
-            );
-        }
-
-        await interaction.editReply(
-            `✅ **Command Sent**\n\`${commandToSend}\`\n**Response:** ${result.message || 'Success'}`
-        );
-
-    } catch (err) {
-        console.error(err);
-        await interaction.editReply(
-            `❌ Error:\n\`${err.message}\``
-        );
+    if (db[guildId]) {
+      return interaction.editReply({
+        embeds: [
+          redEmbed(
+            "❌ Already Configured",
+            "This server has already been set up."
+          )
+        ]
+      });
     }
+
+    const serverId = interaction.options.getString("server_id");
+    const apiKey = interaction.options.getString("api_key");
+    const logChannel = interaction.options.getChannel("log_channel");
+
+    let serverInfo;
+    try {
+      serverInfo = await fetchServerInfo(serverId, apiKey);
+    } catch (err) {
+      return interaction.editReply({
+        embeds: [
+          redEmbed("❌ API Error", err.message)
+        ]
+      });
+    }
+
+    db[guildId] = {
+      serverId,
+      apiKey,
+      logChannelId: logChannel.id,
+      setupBy: interaction.user.id,
+      setupAt: Date.now()
+    };
+
+    writeDB(db);
+
+    const embed = redEmbed(
+      "✅ Setup Complete",
+      `**Server:** ${serverInfo.Name}
+**Players:** ${serverInfo.CurrentPlayers}/${serverInfo.MaxPlayers}
+**Join Code:** \`${serverInfo.JoinCode}\`
+**Owner ID:** \`${serverInfo.OwnerId}\`
+
+🟢 Oxford API verified successfully.`
+    );
+
+    await interaction.editReply({ embeds: [embed] });
+  }
 });
 
-// -------------------------------
-// Keep-Alive Server (Render)
-// -------------------------------
-const PORT = process.env.PORT || 10000;
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Vertex bot is online');
-}).listen(PORT, () => {
-    console.log(`🌐 Keep-alive server running on port ${PORT}`);
-});
+/* =======================
+   KEEP ALIVE (RENDER)
+======================= */
 
-// -------------------------------
-// Start Bot
-// -------------------------------
-client.login(DISCORD_TOKEN);
+import http from "http";
+http.createServer((_, res) => {
+  res.writeHead(200);
+  res.end("Bot is alive");
+}).listen(process.env.PORT || 10000);
+
+/* =======================
+   LOGIN
+======================= */
+
+client.login(TOKEN);
