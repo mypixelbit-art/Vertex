@@ -1,17 +1,47 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-// Initialize Client
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
-// Path to our JSON database
+// --- Configuration ---
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 const DB_PATH = path.join(__dirname, 'database.json');
 
-// --- Helper Functions ---
+// --- Define Commands ---
+const commands = [
+    new SlashCommandBuilder()
+        .setName('setup')
+        .setDescription('Link this Discord server to your Oxford Server API')
+        .addStringOption(option => 
+            option.setName('serverid').setDescription('Your Oxford Server ID').setRequired(true))
+        .addStringOption(option => 
+            option.setName('apikey').setDescription('Your Oxford API Key').setRequired(true)),
 
-// Load Database
+    new SlashCommandBuilder()
+        .setName('ban')
+        .setDescription('Ban a player from the game server')
+        .addStringOption(option => 
+            option.setName('username').setDescription('In-game Username').setRequired(true))
+        .addStringOption(option => 
+            option.setName('reason').setDescription('Reason for ban').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('kick')
+        .setDescription('Kick a player from the game server')
+        .addStringOption(option => 
+            option.setName('username').setDescription('In-game Username').setRequired(true))
+        .addStringOption(option => 
+            option.setName('reason').setDescription('Reason for kick').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('run')
+        .setDescription('Run a custom command on the server')
+        .addStringOption(option => 
+            option.setName('command').setDescription('The command to run (e.g., "time 12", "announce Hello")').setRequired(true)),
+].map(command => command.toJSON());
+
+// --- Database Helper Functions ---
 function loadDb() {
     if (!fs.existsSync(DB_PATH)) {
         fs.writeFileSync(DB_PATH, JSON.stringify({}));
@@ -20,13 +50,13 @@ function loadDb() {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
 }
 
-// Save Database
 function saveDb(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
-// Send Command to Oxford API
+// --- API Helper Function ---
 async function sendServerCommand(serverId, apiKey, commandString) {
+    // Note: We need 'fetch' (built-in to Node v18+). If using older Node, install 'node-fetch'
     const response = await fetch('https://api.oxfd.re/v1/server/command', {
         method: 'POST',
         headers: {
@@ -43,12 +73,30 @@ async function sendServerCommand(serverId, apiKey, commandString) {
     return await response.json();
 }
 
-// --- Bot Events ---
+// --- Initialize Client ---
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-client.once('ready', () => {
+// --- Event: Bot Ready (Register Commands Here) ---
+client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
+
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+    try {
+        console.log('Started refreshing application (/) commands...');
+        
+        await rest.put(
+            Routes.applicationCommands(CLIENT_ID),
+            { body: commands },
+        );
+
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error('Error reloading commands:', error);
+    }
 });
 
+// --- Event: Interaction Handler ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -57,7 +105,6 @@ client.on('interactionCreate', async interaction => {
 
     // --- /setup Command ---
     if (interaction.commandName === 'setup') {
-        // Check if user is admin (Optional security)
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: 'You need Administrator permissions to use this.', ephemeral: true });
         }
@@ -65,7 +112,6 @@ client.on('interactionCreate', async interaction => {
         const serverId = interaction.options.getString('serverid');
         const apiKey = interaction.options.getString('apikey');
 
-        // Save to JSON
         db[guildId] = { serverId, apiKey };
         saveDb(db);
 
@@ -73,7 +119,7 @@ client.on('interactionCreate', async interaction => {
         return;
     }
 
-    // --- Check if Server is Setup ---
+    // --- Check Database for Keys ---
     const serverData = db[guildId];
     if (!serverData) {
         return interaction.reply({ content: '❌ This server is not set up yet. An admin must run `/setup` first.', ephemeral: true });
@@ -81,37 +127,27 @@ client.on('interactionCreate', async interaction => {
 
     const { serverId, apiKey } = serverData;
 
+    // --- Execute Game Commands ---
     try {
-        await interaction.deferReply(); // Bot is "thinking..."
+        await interaction.deferReply(); 
 
         let commandToSend = '';
 
-        // --- /ban ---
         if (interaction.commandName === 'ban') {
             const user = interaction.options.getString('username');
             const reason = interaction.options.getString('reason');
-            // Format: "ban Username Reason"
             commandToSend = `ban ${user} ${reason}`; 
         } 
-        
-        // --- /kick ---
         else if (interaction.commandName === 'kick') {
             const user = interaction.options.getString('username');
             const reason = interaction.options.getString('reason');
-            // Format: "kick Username Reason"
             commandToSend = `kick ${user} ${reason}`;
         } 
-        
-        // --- /run (Custom Command) ---
         else if (interaction.commandName === 'run') {
-            // Format: whatever the user typed, e.g., "time 7"
             commandToSend = interaction.options.getString('command');
         }
 
-        // Execute API Call
         const result = await sendServerCommand(serverId, apiKey, commandToSend);
-
-        // Success Response
         await interaction.editReply(`✅ **Command Sent!**\nExecuted: \`${commandToSend}\`\nResponse: ${result.message || 'Success'}`);
 
     } catch (error) {
@@ -120,4 +156,5 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// --- Start Bot ---
+client.login(TOKEN);
