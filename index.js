@@ -37,7 +37,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 // --- API Helper Function ---
-// --- API Helper Function (Debug Version) ---
+// --- API Helper Function (Anti-Cloudflare Version) ---
 async function sendServerCommand(commandString) {
     console.log(`Sending command to Server ID: ${SERVER_ID ? 'Loaded OK' : 'MISSING'}`); 
 
@@ -46,24 +46,31 @@ async function sendServerCommand(commandString) {
         headers: {
             'Content-Type': 'application/json',
             'server-id': SERVER_ID,
-            'server-key': API_KEY
+            'server-key': API_KEY,
+            // 1. Pretend to be Google Chrome on Windows
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            // 2. Tell the server we specifically want JSON data
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive'
         },
         body: JSON.stringify({ command: commandString })
     });
 
-    // 1. Get the raw text first (don't parse JSON yet)
     const rawText = await response.text();
 
-    // 2. Check if the request failed
     if (!response.ok) {
-        // Log the status and the raw HTML/Text to the console so we can debug
-        console.error(`API Error [${response.status}]: ${rawText}`);
+        // If it's still blocking us, we will see the error here
+        console.error(`API Error [${response.status}]: Cloudflare/Server rejected the request.`);
+        // Note: I removed the raw HTML log because it's too long, but we know it's Cloudflare.
         
-        // Throw a clean error for the Discord user
-        throw new Error(`API Error ${response.status}: The server returned an error (check console logs).`);
+        if (response.status === 403) {
+            throw new Error(`Cloudflare is blocking the bot. The 'User-Agent' fix didn't work. The server might have blocked Render's IP address.`);
+        }
+        
+        throw new Error(`API Error ${response.status}: Check logs.`);
     }
 
-    // 3. If it succeeded, try to parse the JSON
     try {
         return JSON.parse(rawText);
     } catch (e) {
