@@ -8,23 +8,25 @@ import {
   PermissionFlagsBits
 } from "discord.js";
 import fs from "fs";
+import http from "http";
 
 /* =======================
-   BASIC CONFIG
+   CONFIG
 ======================= */
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-
 const DB_FILE = "./database.json";
 
 /* =======================
-   DATABASE HELPERS
+   DATABASE
 ======================= */
 
 function readDB() {
   if (!fs.existsSync(DB_FILE)) return {};
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  const raw = fs.readFileSync(DB_FILE, "utf8");
+  if (!raw) return {};
+  return JSON.parse(raw);
 }
 
 function writeDB(data) {
@@ -32,7 +34,7 @@ function writeDB(data) {
 }
 
 /* =======================
-   EMBED HELPER
+   EMBEDS
 ======================= */
 
 function redEmbed(title, description) {
@@ -49,7 +51,6 @@ function redEmbed(title, description) {
 
 async function fetchServerInfo(serverId, apiKey) {
   const res = await fetch("https://api.oxfd.re/v1/server", {
-    method: "GET",
     headers: {
       "Content-Type": "application/json",
       "server-id": serverId,
@@ -62,7 +63,7 @@ async function fetchServerInfo(serverId, apiKey) {
     throw new Error(`API Error ${res.status}: ${text}`);
   }
 
-  return await res.json();
+  return res.json();
 }
 
 /* =======================
@@ -74,36 +75,25 @@ const commands = [
     .setName("setup")
     .setDescription("Setup the bot for this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(opt =>
-      opt.setName("server_id")
-        .setDescription("Oxford Server ID")
-        .setRequired(true)
+    .addStringOption(o =>
+      o.setName("server_id").setDescription("Oxford Server ID").setRequired(true)
     )
-    .addStringOption(opt =>
-      opt.setName("api_key")
-        .setDescription("Oxford API Key")
-        .setRequired(true)
+    .addStringOption(o =>
+      o.setName("api_key").setDescription("Oxford API Key").setRequired(true)
     )
-    .addChannelOption(opt =>
-      opt.setName("log_channel")
-        .setDescription("Log channel")
-        .setRequired(true)
+    .addChannelOption(o =>
+      o.setName("log_channel").setDescription("Log channel").setRequired(true)
     )
-].map(cmd => cmd.toJSON());
-
-/* =======================
-   REGISTER COMMANDS
-======================= */
+].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-(async () => {
-  await rest.put(
-    Routes.applicationCommands(CLIENT_ID),
-    { body: commands }
-  );
-  console.log("✅ Slash commands registered");
-})();
+await rest.put(
+  Routes.applicationCommands(CLIENT_ID),
+  { body: commands }
+);
+
+console.log("✅ Slash commands registered");
 
 /* =======================
    CLIENT
@@ -113,7 +103,7 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("clientReady", () => {
+client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
@@ -124,69 +114,25 @@ client.once("clientReady", () => {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
+  if (interaction.commandName !== "setup") return;
+
+  await interaction.deferReply({ flags: 64 }); // ephemeral
+
   try {
-    // ✅ ACKNOWLEDGE IMMEDIATELY
-    await interaction.deferReply({ flags: 64 }); // ephemeral
-
-    if (interaction.commandName === "setup") {
-      // ⏳ NOW it's safe to do async work
-      const serverId = interaction.options.getString("server_id");
-      const apiKey = interaction.options.getString("api_key");
-
-      // Example DB save
-      const db = readDB();
-      db[interaction.guildId] = {
-        serverId,
-        apiKey
-      };
-      writeDB(db);
-
-      await interaction.editReply({
-        embeds: [
-          {
-            title: "✅ Setup Complete",
-            description: "Your server has been configured successfully.",
-            color: 0xED4245 // RED
-          }
-        ]
-      });
-    }
-
-  } catch (err) {
-    console.error("Interaction error:", err);
-
-    // 🛟 SAFETY NET — only reply if still possible
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({
-        content: "❌ An unexpected error occurred."
-      }).catch(() => {});
-    }
-  }
-});
-
     const serverId = interaction.options.getString("server_id");
     const apiKey = interaction.options.getString("api_key");
     const logChannel = interaction.options.getChannel("log_channel");
 
-    let serverInfo;
-    try {
-      serverInfo = await fetchServerInfo(serverId, apiKey);
-    } catch (err) {
-      return interaction.editReply({
-        embeds: [
-          redEmbed("❌ API Error", err.message)
-        ]
-      });
-    }
+    const serverInfo = await fetchServerInfo(serverId, apiKey);
 
-    db[guildId] = {
+    const db = readDB();
+    db[interaction.guildId] = {
       serverId,
       apiKey,
       logChannelId: logChannel.id,
       setupBy: interaction.user.id,
       setupAt: Date.now()
     };
-
     writeDB(db);
 
     const embed = redEmbed(
@@ -200,6 +146,12 @@ client.on("interactionCreate", async (interaction) => {
     );
 
     await interaction.editReply({ embeds: [embed] });
+
+  } catch (err) {
+    console.error(err);
+    await interaction.editReply({
+      embeds: [redEmbed("❌ Setup Failed", err.message)]
+    });
   }
 });
 
@@ -207,7 +159,6 @@ client.on("interactionCreate", async (interaction) => {
    KEEP ALIVE (RENDER)
 ======================= */
 
-import http from "http";
 http.createServer((_, res) => {
   res.writeHead(200);
   res.end("Bot is alive");
