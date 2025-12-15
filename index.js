@@ -23,7 +23,6 @@ const CLIENT_ID = process.env.CLIENT_ID;
 
 // Discord GUILD ID (for slash commands)
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
-const OXFORD_SERVER_ID = process.env.OXFORD_GAME_SERVER_ID;
 
 // Oxford API
 const OXFORD_SERVER_ID = process.env.OXFORD_GAME_SERVER_ID;
