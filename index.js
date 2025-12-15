@@ -1,124 +1,165 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+// ===============================
+// Oxford Discord Bot (Full Code)
+// ===============================
+
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder 
+} = require('discord.js');
+
 const http = require('http');
 require('dotenv').config();
+
+// --- FIX: fetch for Node < 18 ---
+const fetch = (...args) =>
+    import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // --- Configuration ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-// PULLING KEYS FROM RENDER ENVIRONMENT SETTINGS
-const SERVER_ID = process.env.OXFORD_SERVER_ID; 
-const API_KEY = process.env.OXFORD_API_KEY;
+// Discord GUILD ID (for slash commands)
+const DISCORD_GUILD_ID = process.env.OXFORD_SERVER_ID;
 
-// --- Define Commands ---
-// Note: We removed /setup because the keys are now saved in Render!
+// Oxford API
+const OXFORD_SERVER_ID = process.env.OXFORD_GAME_SERVER_ID;
+const OXFORD_API_KEY = process.env.OXFORD_API_KEY;
+
+// --- Safety checks ---
+if (!TOKEN || !CLIENT_ID || !DISCORD_GUILD_ID || !OXFORD_SERVER_ID || !OXFORD_API_KEY) {
+    console.error("❌ Missing required environment variables!");
+}
+
+// --- Slash Commands ---
 const commands = [
     new SlashCommandBuilder()
         .setName('ban')
         .setDescription('Ban a player from the game server')
-        .addStringOption(option => 
-            option.setName('username').setDescription('In-game Username').setRequired(true))
-        .addStringOption(option => 
-            option.setName('reason').setDescription('Reason for ban').setRequired(true)),
+        .addStringOption(option =>
+            option.setName('username')
+                .setDescription('In-game username')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for ban')
+                .setRequired(true)),
 
     new SlashCommandBuilder()
         .setName('kick')
         .setDescription('Kick a player from the game server')
-        .addStringOption(option => 
-            option.setName('username').setDescription('In-game Username').setRequired(true))
-        .addStringOption(option => 
-            option.setName('reason').setDescription('Reason for kick').setRequired(true)),
+        .addStringOption(option =>
+            option.setName('username')
+                .setDescription('In-game username')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for kick')
+                .setRequired(true)),
 
     new SlashCommandBuilder()
         .setName('run')
-        .setDescription('Run a custom command on the server')
-        .addStringOption(option => 
-            option.setName('command').setDescription('The command to run (e.g., "time 12", "announce Hello")').setRequired(true)),
-].map(command => command.toJSON());
+        .setDescription('Run a custom server command')
+        .addStringOption(option =>
+            option.setName('command')
+                .setDescription('Command to run (e.g. "time 12")')
+                .setRequired(true)),
+].map(cmd => cmd.toJSON());
 
-async function sendServerCommand(commandString) {
+// --- Send command to Oxford API ---
+async function sendServerCommand(command) {
     const response = await fetch('https://api.oxfd.re/v1/server/command', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'server-id': process.env.OXFORD_SERVER_ID,
-            'server-key': process.env.OXFORD_API_KEY,
-            'User-Agent': 'Mozilla/5.0' 
+            'server-id': OXFORD_SERVER_ID,
+            'server-key': OXFORD_API_KEY,
+            'User-Agent': 'Oxford-Discord-Bot'
         },
-        body: JSON.stringify({ command: commandString })
+        body: JSON.stringify({ command })
     });
 
-    return await response.json();
+    return response.json();
 }
-// --- Initialize Client ---
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// --- Event: Bot Ready ---
+// --- Discord Client ---
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds]
+});
+
+// --- Bot Ready ---
 client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-
-    // Safety check for keys
-    if (!SERVER_ID || !API_KEY) {
-        console.error("⚠️ CRITICAL: OXFORD_SERVER_ID or OXFORD_API_KEY is missing from Render Environment Variables!");
-    } else {
-        console.log("✅ Oxford API Keys successfully loaded from Environment.");
-    }
+    console.log(`✅ Logged in as ${client.user.tag}`);
 
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
     try {
-        console.log('Refreshing application (/) commands...');
+        console.log('🔄 Registering slash commands...');
         await rest.put(
-            Routes.applicationCommands(CLIENT_ID),
-            { body: commands },
+            Routes.applicationGuildCommands(CLIENT_ID, DISCORD_GUILD_ID),
+            { body: commands }
         );
-        console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {
-        console.error('Error reloading commands:', error);
+        console.log('✅ Slash commands registered');
+    } catch (err) {
+        console.error('❌ Failed to register commands:', err);
     }
 });
 
-// --- Event: Interaction Handler ---
+// --- Interaction Handler ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    await interaction.deferReply({ ephemeral: true });
+
+    let commandToSend;
+
     try {
-        await interaction.deferReply(); 
-
-        let commandToSend = '';
-
         if (interaction.commandName === 'ban') {
             const user = interaction.options.getString('username');
             const reason = interaction.options.getString('reason');
-            commandToSend = `ban ${user} ${reason}`; 
-        } 
-        else if (interaction.commandName === 'kick') {
+            commandToSend = `ban ${user} ${reason}`;
+        }
+
+        if (interaction.commandName === 'kick') {
             const user = interaction.options.getString('username');
             const reason = interaction.options.getString('reason');
             commandToSend = `kick ${user} ${reason}`;
-        } 
-        else if (interaction.commandName === 'run') {
+        }
+
+        if (interaction.commandName === 'run') {
             commandToSend = interaction.options.getString('command');
         }
 
         const result = await sendServerCommand(commandToSend);
-        await interaction.editReply(`✅ **Command Sent!**\nExecuted: \`${commandToSend}\`\nResponse: ${result.message || 'Success'}`);
+
+        if (!result || result.error) {
+            return interaction.editReply(
+                `❌ Oxford API Error:\n\`\`\`${JSON.stringify(result, null, 2)}\`\`\``
+            );
+        }
+
+        await interaction.editReply(
+            `✅ **Command Sent!**\n\`${commandToSend}\`\n**Response:** ${result.message || 'Success'}`
+        );
 
     } catch (error) {
         console.error(error);
-        await interaction.editReply(`❌ **Error:** Failed to send command.\nDetails: ${error.message}`);
+        await interaction.editReply(
+            `❌ Error executing command:\n\`${error.message}\``
+        );
     }
 });
 
-// --- HTTP Server for Render (Keep Alive) ---
-const port = process.env.PORT || 3000;
+// --- Keep-alive Server (Render) ---
+const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.write('Oxford Bot is online!');
-    res.end();
-}).listen(port, () => {
-    console.log(`Keep-alive server listening on port ${port}`);
+    res.end('Oxford Bot is running');
+}).listen(PORT, () => {
+    console.log(`🌐 Keep-alive server running on port ${PORT}`);
 });
 
-// --- Start Bot ---
+// --- Login ---
 client.login(TOKEN);
